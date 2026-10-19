@@ -1,0 +1,19 @@
+version: "3.8"
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    container_name: knowledge_postgres
+    environment:
+      POSTGRES_USER: lukas_kellner
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: knowledge_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ../database/init.sql:/docker-entrypoint-initdb.d/init.sql
+    restart: always
+
+volumes:
+  pgdata:
