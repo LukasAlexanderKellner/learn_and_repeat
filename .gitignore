@@ -222,3 +222,6 @@ __marimo__/
 # Remove PDF and PNGs
 *.pdf
 *.png
+
+# OCR-generated Markdown
+/data/output_markdown/
