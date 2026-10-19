@@ -225,5 +225,5 @@ __marimo__/
 
 # OCR-generated Markdown
 /data/output_markdown/
+/data/output_markdown_text_only/
 /data/assets/
-
