@@ -87,10 +87,10 @@ def process_pdf_to_markdown(pdf_path: str, output_dir: str):
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
-    test_pdf = "../../data/input_pdfs/beispiel_mathe.pdf"
+    test_pdf = "data/input_pdf/math_vorkurs.pdf" 
 
     if os.path.exists(test_pdf):
-        process_pdf_to_markdown(test_pdf, "../../data/processed/")
+        process_pdf_to_markdown(test_pdf, "data/output_markdown/")
     else:
         logger.warning(
             "Bitte lege eine Test-PDF unter '%s' ab, um den Test zu starten.",
