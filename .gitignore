@@ -227,3 +227,6 @@ __marimo__/
 /data/output_markdown/
 /data/output_markdown_text_only/
 /data/assets/
+
+# Remove ds store
+.DS_Store
