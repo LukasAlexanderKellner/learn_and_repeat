@@ -1,17 +1,57 @@
 import re
 
 
+def split_markdown_into_chapters(markdown_text: str) -> list[tuple[str, str]]:
+    """Split Markdown at level-one and level-two headings.
+
+    Level-two sections use the most recent level-one heading as context. Deeper
+    headings remain part of their containing chapter.
+    """
+    chapters: list[tuple[str, str]] = []
+    current_title = "Einleitung"
+    current_parent_title: str | None = None
+    current_lines: list[str] = []
+
+    def finish_chapter() -> None:
+        content = "\n".join(current_lines).strip()
+        if content:
+            chapters.append((current_title, content))
+
+    for line in markdown_text.splitlines():
+        heading_match = re.match(r"^(#{1,2})[ \t]+(.+?)\s*#*\s*$", line)
+        if heading_match is None:
+            current_lines.append(line)
+            continue
+
+        finish_chapter()
+        heading_level = len(heading_match.group(1))
+        heading_title = heading_match.group(2).strip()
+        if heading_level == 1:
+            current_parent_title = heading_title
+            current_title = heading_title
+        else:
+            current_title = (
+                f"{current_parent_title} / {heading_title}"
+                if current_parent_title
+                else heading_title
+            )
+        current_lines = [line]
+
+    finish_chapter()
+    return chapters
+
+
 def semantic_chunk_markdown(
     markdown_text: str, max_chunk_size: int = 1000
 ) -> list[str]:
-    """Spaltet ein Markdown-Dokument an logischen Grenzen (Überschriften, Paragraphen)
+    """Split Markdown at logical boundaries such as headings and paragraphs.
 
-    in semantisch zusammenhängende Chunks auf.
+    Keep each resulting chunk within the requested maximum size.
     """
     if max_chunk_size <= 0:
         raise ValueError("max_chunk_size must be greater than zero")
 
-    # Spalte primär an Markdown-Überschriften (#, ##, ###) oder Absätzen (\n\n)
+    # Split primarily at Markdown headings or paragraph boundaries.
     raw_sections = re.split(r"\n(?=#{1,3}\s)|\n\n", markdown_text)
 
     chunks: list[str] = []

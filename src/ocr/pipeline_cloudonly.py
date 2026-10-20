@@ -13,20 +13,20 @@ from pydantic import ValidationError
 from ocr_schema import OCRPageResult, Sketch
 from refiner import refine_document_layout_and_content
 
-# Lädt Umgebungsvariablen aus der .env-Datei (inkl. GEMINI_API_KEY)
+# Load environment variables from the .env file, including GEMINI_API_KEY.
 load_dotenv()
 
-# Konfiguration
+# Configuration.
 GEMINI_MODEL = "gemini-2.5-flash"
 
 logger = logging.getLogger(__name__)
 
-# Initialisiere den Gemini Client
+# Initialize the Gemini client.
 gemini_client = genai.Client()
 
 
 def pdf_page_to_bytes(page: fitz.Page, zoom: int = 2) -> tuple[bytes, int, int]:
-    """Konvertiert eine PDF-Seite in PNG-Rohbytes und liefert die Pixel-Dimensionen."""
+    """Render a PDF page to PNG bytes and return the pixel dimensions."""
     mat = fitz.Matrix(zoom, zoom)
     pix = page.get_pixmap(matrix=mat)
     img_bytes = pix.tobytes("png")
@@ -36,9 +36,9 @@ def pdf_page_to_bytes(page: fitz.Page, zoom: int = 2) -> tuple[bytes, int, int]:
 def process_page_with_gemini(
     img_bytes: bytes, page_num: int
 ) -> tuple[str, list[Sketch]]:
-    """Sendet das Bild an Gemini 2.5 Flash, um Text/LaTeX zu transkribieren
+    """Send an image to Gemini 2.5 Flash to transcribe text and LaTeX
 
-    und Skizzen direkt inline mit Platzhaltern im Lesefluss zu positionieren.
+    and place sketch placeholders inline in the reading flow.
     """
     prompt = (
         "Du bist ein exzellenter OCR- und Layout-Assistent für mathematische und maschinelle Lern-Dokumente. "
@@ -116,9 +116,9 @@ def crop_and_save_sketches(
     image_width: int,
     image_height: int,
 ):
-    """Schneidet die Skizzen basierend auf den von Gemini gelieferten normalisierten
+    """Crop sketches using Gemini's normalized coordinates
 
-    Koordinaten aus und speichert sie unter dem exakten Dateinamen ab, den Gemini im Markdown referenziert hat.
+    and save them under the exact filenames referenced in the Markdown.
     """
     os.makedirs(assets_dir, exist_ok=True)
     page_rect = page.rect
@@ -129,7 +129,7 @@ def crop_and_save_sketches(
         idx = item.index
         box = item.box_2d
 
-        # Denormalisierung: Skala 0-1000 auf tatsächliche Bildpixel umrechnen
+        # Convert normalized 0-1000 coordinates to image pixels.
         y_min = (box[0] / 1000.0) * image_height
         x_min = (box[1] / 1000.0) * image_width
         y_max = (box[2] / 1000.0) * image_height
@@ -138,13 +138,13 @@ def crop_and_save_sketches(
         if x_max <= x_min or y_max <= y_min:
             continue
 
-        # Padding hinzufügen
+        # Add padding.
         x_min = max(0, x_min - padding_x)
         y_min = max(0, y_min - padding_y)
         x_max = min(image_width, x_max + padding_x)
         y_max = min(image_height, y_max + padding_y)
 
-        # Auf PDF-Seitenkoordinaten übertragen
+        # Convert image coordinates to PDF page coordinates.
         rect = fitz.Rect(
             page_rect.x0 + x_min * page_rect.width / image_width,
             page_rect.y0 + y_min * page_rect.height / image_height,
@@ -156,7 +156,7 @@ def crop_and_save_sketches(
         if rect.is_empty or rect.width <= 0 or rect.height <= 0:
             continue
 
-        # Dateiname muss exakt zu dem passen, den wir im Prompt vorgegeben haben!
+        # The filename must match the one specified in the prompt.
         asset_filename = f"sketch_p{page_num}_{idx}.png"
         asset_path = os.path.join(assets_dir, asset_filename)
 
@@ -189,15 +189,15 @@ def process_pdf_to_markdown(pdf_path: str, output_dir: str) -> str:
         logger.info("Verarbeite Seite %s/%s...", current_page_idx, len(doc))
         page = doc[page_num]
 
-        # 1. Seite als Bytes rendern + Dimensionen holen
+        # 1. Render the page and get its pixel dimensions.
         img_bytes, image_width, image_height = pdf_page_to_bytes(page)
 
-        # 2. Gemini verarbeitet Text, LaTeX UND platziert die Bild-Tags im Textfluss
+        # 2. Let Gemini transcribe text and LaTeX and place image tags inline.
         markdown_content, sketches = process_page_with_gemini(
             img_bytes, current_page_idx
         )
 
-        # 3. Skizzen exakt nach den von Gemini definierten Indizes ausschneiden und abspeichern
+        # 3. Crop and save sketches using the indices returned by Gemini.
         if sketches:
             crop_and_save_sketches(
                 page,

@@ -8,9 +8,9 @@ gemini_client = genai.Client()
 
 
 def refine_document_layout_and_content(raw_markdown: str) -> str:
-    """Führt eine zweistufige Korrekturschleife für Layout und Inhalt durch."""
+    """Refine document layout and content in two passes."""
 
-    # Pass 1: Layout & Strukturierung
+    # Pass 1: layout and structure.
     prompt_layout = (
         "Du bist ein Experte für Dokumenten-Layout und Markdown-Formatierung. "
         "Du erhältst ein rohes, aus mehreren Seiten zusammengefügtes Markdown-Dokument. "
@@ -27,7 +27,7 @@ def refine_document_layout_and_content(raw_markdown: str) -> str:
     )
     layout_clean_md = response_layout.text
 
-    # Pass 2: Inhaltliche & Mathematische Korrektur
+    # Pass 2: factual and mathematical corrections.
     prompt_content = (
         "Du bist ein brillanter Professor für Mathematik und Machine Learning. "
         "Überarbeite das folgende Markdown-Dokument inhaltlich und fachlich:\n"
@@ -39,7 +39,7 @@ def refine_document_layout_and_content(raw_markdown: str) -> str:
     )
 
     response_content = gemini_client.models.generate_content(
-        model="gemini-2.5-flash",  # Hier könnte alternativ auch ein Claude-Modell via Anthropic API genutzt werden
+        model="gemini-2.5-flash",  # An Anthropic API client could be used here instead.
         contents=[prompt_content, layout_clean_md],
     )
 

@@ -28,7 +28,7 @@ class FakeCursor:
             return self.existing_document
         if "INSERT INTO documents" in self.last_query:
             return (42,)
-        if "INSERT INTO chunks" in self.last_query:
+        if "INSERT INTO chapters" in self.last_query:
             return (101,)
         return None
 
@@ -64,7 +64,7 @@ class IngestMarkdownFileTests(unittest.TestCase):
 
     def test_embedding_failure_stops_before_database_connection(self) -> None:
         with patch.object(ingest, "generate_embedding", return_value=None), patch.object(
-            ingest, "_connect_to_database"
+            ingest, "connect_to_database"
         ) as connect:
             with self.assertRaisesRegex(RuntimeError, "keine Daten gespeichert"):
                 ingest.ingest_markdown_file(str(self.markdown_path), "sample.pdf")
@@ -86,7 +86,7 @@ class IngestMarkdownFileTests(unittest.TestCase):
 
         with patch.object(
             ingest, "generate_embedding", side_effect=generate_embedding
-        ), patch.object(ingest, "_connect_to_database", side_effect=connect), patch.object(
+        ), patch.object(ingest, "connect_to_database", side_effect=connect), patch.object(
             ingest, "register_vector"
         ):
             document_id = ingest.ingest_markdown_file(
@@ -95,6 +95,8 @@ class IngestMarkdownFileTests(unittest.TestCase):
 
         self.assertEqual(document_id, 42)
         self.assertEqual(events, ["embedding", "connect"])
+        self.assertTrue(any("INSERT INTO chapters" in query for query in cursor.queries))
+        self.assertTrue(any("INSERT INTO reviews" in query for query in cursor.queries))
         self.assertTrue(any("INSERT INTO chunks" in query for query in cursor.queries))
 
     def test_existing_path_is_not_inserted_again(self) -> None:
@@ -104,7 +106,7 @@ class IngestMarkdownFileTests(unittest.TestCase):
         with patch.object(
             ingest, "generate_embedding", return_value=[0.1] * 768
         ), patch.object(
-            ingest, "_connect_to_database", return_value=connection
+            ingest, "connect_to_database", return_value=connection
         ), patch.object(ingest, "register_vector"):
             result = ingest.ingest_markdown_file(
                 str(self.markdown_path), "sample.pdf"

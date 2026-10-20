@@ -8,7 +8,7 @@ logger = logging.getLogger(__name__)
 
 
 def generate_embedding(text: str) -> list[float] | None:
-    """Sendet einen Text-Chunk an Ollama und gibt den 768-dimensionalen Vektor zurück."""
+    """Send a text chunk to Ollama and return its 768-dimensional embedding."""
     payload = {
         "model": EMBED_MODEL,
         "prompt": text,
@@ -21,8 +21,8 @@ def generate_embedding(text: str) -> list[float] | None:
         if isinstance(embedding, list) and len(embedding) == 768:
             return embedding
         else:
-            logger.error("Unerwartete Vektor-Dimension erhalten")
+            logger.error("Received an embedding with an unexpected dimension.")
             return None
     except requests.exceptions.RequestException:
-        logger.exception("Fehler beim Generieren des Embeddings via Ollama")
+        logger.exception("Failed to generate an embedding with Ollama.")
         return None

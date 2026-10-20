@@ -8,10 +8,10 @@ from dotenv import load_dotenv
 from google import genai
 from google.genai import types
 
-# Lädt Umgebungsvariablen aus der .env-Datei (inkl. GEMINI_API_KEY)
+# Load environment variables from the .env file, including GEMINI_API_KEY.
 load_dotenv()
 
-# Konfiguration
+# Configuration.
 OLLAMA_URL = "http://localhost:11434/api/generate"
 OCR_MODEL = "richardyoung/olmocr2:7b-q8"
 GEMINI_LAYOUT_MODEL = "gemini-2.5-flash"
@@ -19,14 +19,14 @@ GEMINI_LAYOUT_MODEL = "gemini-2.5-flash"
 logger = logging.getLogger(__name__)
 OLLAMA_TIMEOUT = (10, 600)
 
-# Initialisiere den Gemini Client (greift automatisch auf GEMINI_API_KEY aus der .env zu)
+# Initialize the Gemini client, which reads GEMINI_API_KEY from the environment.
 gemini_client = genai.Client()
 
 
 def pdf_page_to_base64_and_bytes(
     page: fitz.Page, zoom: int = 2
 ) -> tuple[str, bytes, int, int]:
-    """Konvertiert eine PDF-Seite in Base64, Roh-Bytes und liefert die Pixel-Dimensionen."""
+    """Convert a PDF page to Base64 and bytes, and return its pixel dimensions."""
     mat = fitz.Matrix(zoom, zoom)
     pix = page.get_pixmap(matrix=mat)
     img_bytes = pix.tobytes("png")
@@ -35,7 +35,7 @@ def pdf_page_to_base64_and_bytes(
 
 
 def run_olmocr(image_base64: str) -> str | None:
-    """Sendet das Bild an das lokale olmocr2 Modell für Text & LaTeX-Formeln."""
+    """Send an image to the local olmocr2 model for text and LaTeX transcription."""
     prompt = (
         "You are an excellent OCR assistant for mathematical and machine learning documents. "
         "Analyze this document image and transcribe the entire text accurately in Markdown. "
@@ -68,9 +68,9 @@ def run_olmocr(image_base64: str) -> str | None:
 
 
 def run_gemini_layout_detection(img_bytes: bytes) -> list[list[float]]:
-    """Nutzt Gemini 2.5 Flash, um Skizzen, Diagramme und Zeichnungen per
+    """Use Gemini 2.5 Flash to detect sketches, diagrams, and drawings as
 
-    Structured JSON (normalisierte Koordinaten 0-1000) zu erkennen.
+    structured JSON with normalized coordinates from 0 to 1000.
     """
     prompt = (
         "Analysiere dieses Dokumentenbild. Identifiziere alle handgezeichneten Skizzen, "
@@ -89,13 +89,13 @@ def run_gemini_layout_detection(img_bytes: bytes) -> list[list[float]]:
                 prompt,
             ],
             config=types.GenerateContentConfig(
-                temperature=0.0,  # Deterministisch für exakte Koordinaten
-                response_mime_type="application/json",  # Erzwingt valides JSON
+                temperature=0.0,  # Keep coordinate detection deterministic.
+                response_mime_type="application/json",  # Require valid JSON output.
             ),
         )
 
         data = json.loads(response.text)
-        # Flexibles Parsen, falls Gemini die Liste direkt oder im Dictionary zurückgibt
+        # Accept either a list or a dictionary response from Gemini.
         if isinstance(data, dict):
             boxes = data.get("sketches", data.get("boxes", []))
         elif isinstance(data, list):
@@ -126,9 +126,9 @@ def crop_gemini_sketches(
     image_width: int,
     image_height: int,
 ) -> list[str]:
-    """Rechnet die normalisierten Gemini-Boxen (0-1000) auf echte Pixel um
+    """Convert Gemini's normalized boxes (0-1000) to pixels
 
-    und schneidet die Skizzen via PyMuPDF aus.
+    and crop the sketches with PyMuPDF.
     """
     os.makedirs(assets_dir, exist_ok=True)
     asset_paths = []
@@ -143,7 +143,7 @@ def crop_gemini_sketches(
     )
 
     for idx, box in enumerate(normalized_boxes, start=1):
-        # Denormalisierung: Skala 0-1000 auf tatsächliche Bildpixel umrechnen
+        # Convert normalized 0-1000 coordinates to image pixels.
         y_min = (box[0] / 1000.0) * image_height
         x_min = (box[1] / 1000.0) * image_width
         y_max = (box[2] / 1000.0) * image_height
@@ -157,13 +157,13 @@ def crop_gemini_sketches(
             )
             continue
 
-        # Padding hinzufügen (mit Grenzen des Bildes abgesichert)
+        # Add padding while keeping coordinates within the image bounds.
         x_min = max(0, x_min - padding_x)
         y_min = max(0, y_min - padding_y)
         x_max = min(image_width, x_max + padding_x)
         y_max = min(image_height, y_max + padding_y)
 
-        # Auf PDF-Seitenkoordinaten übertragen
+        # Convert image coordinates to PDF page coordinates.
         rect = fitz.Rect(
             page_rect.x0 + x_min * page_rect.width / image_width,
             page_rect.y0 + y_min * page_rect.height / image_height,
@@ -208,12 +208,12 @@ def process_pdf_to_markdown(pdf_path: str, output_dir: str) -> str:
         logger.info("Verarbeite Seite %s/%s...", current_page_idx, len(doc))
         page = doc[page_num]
 
-        # 1. Seite rendern (Base64 für Ollama, Bytes für Gemini, Maße für Koordinaten)
+        # 1. Render the page for Ollama, Gemini, and coordinate conversion.
         img_b64, img_bytes, image_width, image_height = (
             pdf_page_to_base64_and_bytes(page)
         )
 
-        # 2. Layout-Analyse & Skizzenerkennung über Gemini 2.5 Flash
+        # 2. Use Gemini 2.5 Flash for layout analysis and sketch detection.
         normalized_boxes = run_gemini_layout_detection(img_bytes)
         extracted_image_paths = crop_gemini_sketches(
             page,
@@ -224,12 +224,12 @@ def process_pdf_to_markdown(pdf_path: str, output_dir: str) -> str:
             image_height,
         )
 
-        # 3. Text-OCR über lokales Ollama (olmocr2)
+        # 3. Run text OCR locally with Ollama (olmocr2).
         text_markdown = run_olmocr(img_b64)
         if text_markdown is None:
             text_markdown = f"[OCR fehlgeschlagen für Seite {current_page_idx}]"
 
-        # 4. Extrahierte Skizzen im Markdown einbetten
+        # 4. Embed extracted sketches in the Markdown.
         if extracted_image_paths:
             text_markdown += "\n\n### Skizzen dieser Seite:\n"
             for asset_filename in extracted_image_paths:

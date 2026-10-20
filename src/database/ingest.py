@@ -1,45 +1,18 @@
-from datetime import datetime
 import logging
 import os
 from pathlib import Path
 
-import psycopg
-from dotenv import load_dotenv
 from pgvector import Vector
 from pgvector.psycopg import register_vector
 
-from src.processing.chunker import semantic_chunk_markdown
+from src.database.connection import PROJECT_ROOT, connect_to_database
+from src.processing.chunker import (
+    semantic_chunk_markdown,
+    split_markdown_into_chapters,
+)
 from src.processing.embedder import generate_embedding
 
 logger = logging.getLogger(__name__)
-
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-load_dotenv(PROJECT_ROOT / "docker" / ".env")
-
-
-def _connect_to_database() -> psycopg.Connection:
-    """Connect using DATABASE_URL or the POSTGRES_* variables from docker/.env."""
-    database_url = os.environ.get("DATABASE_URL")
-    if database_url:
-        return psycopg.connect(database_url)
-
-    required_variables = ("POSTGRES_USER", "POSTGRES_PASSWORD", "POSTGRES_DB")
-    missing_variables = [
-        variable for variable in required_variables if not os.environ.get(variable)
-    ]
-    if missing_variables:
-        missing = ", ".join(missing_variables)
-        raise RuntimeError(
-            f"Missing required database environment variables: {missing}"
-        )
-
-    return psycopg.connect(
-        host=os.environ.get("DB_HOST", "localhost"),
-        port=os.environ.get("DB_PORT", "5433"),
-        dbname=os.environ["POSTGRES_DB"],
-        user=os.environ["POSTGRES_USER"],
-        password=os.environ["POSTGRES_PASSWORD"],
-    )
 
 
 def ingest_markdown_file(markdown_path: str, filename: str) -> int | None:
@@ -54,41 +27,65 @@ def ingest_markdown_file(markdown_path: str, filename: str) -> int | None:
     with source_path.open("r", encoding="utf-8") as markdown_file:
         markdown_text = markdown_file.read()
 
-    chunks = semantic_chunk_markdown(markdown_text, max_chunk_size=800)
-    if not chunks:
+    chapters = split_markdown_into_chapters(markdown_text)
+    if not chapters:
         raise ValueError(f"Markdown-Datei enthält keinen Text: {source_path}")
-    logger.info("Markdown in %s Chunks aufgeteilt.", len(chunks))
+    logger.info("Markdown in %s Kapitel aufgeteilt.", len(chapters))
 
-    # Prepare every embedding before opening a database transaction.
-    embedded_chunks: list[tuple[int, str, Vector]] = []
-    for idx, chunk_text in enumerate(chunks, start=1):
-        logger.info("Generiere Embedding für Chunk %s/%s...", idx, len(chunks))
-        embedding = generate_embedding(chunk_text)
-        if embedding is None:
-            logger.error(
-                "Ingestion abgebrochen: Embedding für Chunk %s/%s fehlgeschlagen.",
-                idx,
-                len(chunks),
+    chunked_chapters = [
+        (
+            chapter_index,
+            chapter_title,
+            semantic_chunk_markdown(chapter_content, max_chunk_size=800),
+        )
+        for chapter_index, (chapter_title, chapter_content) in enumerate(
+            chapters, start=1
+        )
+    ]
+    for _, chapter_title, chunks in chunked_chapters:
+        if not chunks:
+            raise ValueError(f"Kapitel enthält keinen Text: {chapter_title}")
+
+    total_chunk_count = sum(len(chunks) for _, _, chunks in chunked_chapters)
+    embedded_chapters: list[tuple[int, str, list[tuple[int, str, Vector]]]] = []
+    total_chunks = 0
+    for chapter_index, chapter_title, chunks in chunked_chapters:
+        embedded_chunks: list[tuple[int, str, Vector]] = []
+        for chunk_index, chunk_text in enumerate(chunks, start=1):
+            total_chunks += 1
+            logger.info(
+                "Generiere Embedding für Chunk %s/%s (Kapitel %s/%s)...",
+                total_chunks,
+                total_chunk_count,
+                chapter_index,
+                len(chapters),
             )
-            raise RuntimeError(
-                f"Embedding für Chunk {idx}/{len(chunks)} fehlgeschlagen; "
-                "es wurden keine Daten gespeichert."
-            )
-        embedded_chunks.append((idx, chunk_text, Vector(embedding)))
+            embedding = generate_embedding(chunk_text)
+            if embedding is None:
+                logger.error(
+                    "Ingestion abgebrochen: Embedding für Kapitel %s, Chunk %s "
+                    "fehlgeschlagen.",
+                    chapter_index,
+                    chunk_index,
+                )
+                raise RuntimeError(
+                    f"Embedding für Kapitel {chapter_index}, Chunk {chunk_index} "
+                    "fehlgeschlagen; es wurden keine Daten gespeichert."
+                )
+            embedded_chunks.append((chunk_index, chunk_text, Vector(embedding)))
+        embedded_chapters.append((chapter_index, chapter_title, embedded_chunks))
 
     resolved_path = str(source_path.resolve())
     legacy_relative_path = os.path.relpath(resolved_path, PROJECT_ROOT)
 
-    with _connect_to_database() as conn:
+    with connect_to_database() as conn:
         register_vector(conn)
         conn.commit()
 
         with conn.transaction():
             with conn.cursor() as cur:
                 cur.execute(
-                    """
-                    SELECT pg_advisory_xact_lock(hashtextextended(%s, 0));
-                    """,
+                    "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0));",
                     (resolved_path,),
                 )
                 cur.execute(
@@ -121,35 +118,46 @@ def ingest_markdown_file(markdown_path: str, filename: str) -> int | None:
                 if document_row is None:
                     raise RuntimeError("Datenbank lieferte keine neue Document-ID.")
                 document_id = document_row[0]
-                today = datetime.now()
-
-                for idx, chunk_text, embedding in embedded_chunks:
+                for chapter_index, chapter_title, embedded_chunks in embedded_chapters:
                     cur.execute(
                         """
-                        INSERT INTO chunks (document_id, chunk_index, content, embedding)
-                        VALUES (%s, %s, %s, %s)
+                        INSERT INTO chapters (document_id, title, chapter_index)
+                        VALUES (%s, %s, %s)
                         RETURNING id;
                         """,
-                        (document_id, idx, chunk_text, embedding),
+                        (document_id, chapter_title, chapter_index),
                     )
-                    chunk_row = cur.fetchone()
-                    if chunk_row is None:
+                    chapter_row = cur.fetchone()
+                    if chapter_row is None:
                         raise RuntimeError(
-                            f"Datenbank lieferte keine ID für Chunk {idx}."
+                            f"Datenbank lieferte keine ID für Kapitel {chapter_index}."
                         )
-                    chunk_id = chunk_row[0]
+                    chapter_id = chapter_row[0]
                     cur.execute(
                         """
                         INSERT INTO reviews (
-                            chunk_id, next_review_date, interval_days,
+                            chapter_id, next_review_date, interval_days,
                             repetition_count, ease_factor
                         )
-                        VALUES (%s, %s, %s, %s, %s);
+                        VALUES (%s, CURRENT_TIMESTAMP, %s, %s, %s);
                         """,
-                        (chunk_id, today, 0, 0, 2.5),
+                        (chapter_id, 0, 0, 2.5),
                     )
+                    for chunk_index, chunk_text, embedding in embedded_chunks:
+                        cur.execute(
+                            """
+                            INSERT INTO chunks (chapter_id, chunk_index, content, embedding)
+                            VALUES (%s, %s, %s, %s);
+                            """,
+                            (chapter_id, chunk_index, chunk_text, embedding),
+                        )
 
     logger.info("Erfolgreich in DB gespeichert! Document-ID: %s", document_id)
+    logger.info(
+        "%s Kapitel und %s Chunks inklusive Kapitel-Reviews gespeichert.",
+        len(embedded_chapters),
+        total_chunk_count,
+    )
     return document_id
 
 

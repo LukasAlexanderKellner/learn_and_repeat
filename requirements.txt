@@ -5,3 +5,5 @@ pgvector>=0.3.6,<1
 python-dotenv>=1.0,<2
 numpy==2.2.1
 pydantic>=2.0,<3
+nicegui==3.18.0
+latex2mathml>=3.77,<4

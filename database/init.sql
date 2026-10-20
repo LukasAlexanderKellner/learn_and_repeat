@@ -9,31 +9,39 @@ CREATE TABLE documents (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- 3. Table for storing chunks (the actual content + vector)
--- Note: 768 is the typical dimension for many local embedding models 
--- (e.g., nomic-embed-text uses 768 dimensions). If you use a different model, adjust this accordingly.
-CREATE TABLE chunks (
+-- 3. Table for storing Markdown chapters
+CREATE TABLE chapters (
     id SERIAL PRIMARY KEY,
-    document_id INT REFERENCES documents(id) ON DELETE CASCADE,
-    chunk_index INT NOT NULL,
-    content TEXT NOT NULL,
-    metadata JSONB, -- flexible field for e.g., chapter titles, page numbers
-    embedding VECTOR(768) 
+    document_id INT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    title TEXT NOT NULL,
+    chapter_index INT NOT NULL,
+    UNIQUE (document_id, chapter_index)
 );
 
--- 4. Table for spaced repetition (the learning memory)
+-- 4. Table for storing chunks (the actual content + vector)
+-- Note: 768 is the typical dimension for nomic-embed-text.
+CREATE TABLE chunks (
+    id SERIAL PRIMARY KEY,
+    chapter_id INT NOT NULL REFERENCES chapters(id) ON DELETE CASCADE,
+    chunk_index INT NOT NULL,
+    content TEXT NOT NULL,
+    metadata JSONB,
+    embedding VECTOR(768),
+    UNIQUE (chapter_id, chunk_index)
+);
+
+-- 5. One spaced-repetition schedule per chapter
 CREATE TABLE reviews (
     id SERIAL PRIMARY KEY,
-    chunk_id INT REFERENCES chunks(id) ON DELETE CASCADE,
-    review_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    next_review_date TIMESTAMP NOT NULL,
-    interval_days INT DEFAULT 0,          -- Current interval in days
-    repetition_count INT DEFAULT 0,       -- How often has it been reviewed?
-    ease_factor REAL DEFAULT 2.5,         -- Difficulty factor according to SM-2 algorithm
+    chapter_id INT NOT NULL UNIQUE REFERENCES chapters(id) ON DELETE CASCADE,
+    review_date TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    next_review_date TIMESTAMPTZ NOT NULL,
+    interval_days INT DEFAULT 0,
+    repetition_count INT DEFAULT 0,
+    ease_factor REAL DEFAULT 2.5,
     last_quality_score INT                -- Last rating (0 to 5)
 );
 
--- 5. Create a vector index for ultra-fast similarity search
--- HNSW (Hierarchical Navigable Small World) is currently the gold standard for vector indexes.
+-- 6. Vector index for similarity search
 CREATE INDEX chunks_embedding_hnsw_idx ON chunks 
 USING hnsw (embedding vector_cosine_ops);
