@@ -8,6 +8,9 @@ import fitz  # PyMuPDF
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
+from pydantic import ValidationError
+
+from ocr_schema import OCRPageResult, Sketch
 from refiner import refine_document_layout_and_content
 
 # Lädt Umgebungsvariablen aus der .env-Datei (inkl. GEMINI_API_KEY)
@@ -32,7 +35,7 @@ def pdf_page_to_bytes(page: fitz.Page, zoom: int = 2) -> tuple[bytes, int, int]:
 
 def process_page_with_gemini(
     img_bytes: bytes, page_num: int
-) -> tuple[str, list[dict]]:
+) -> tuple[str, list[Sketch]]:
     """Sendet das Bild an Gemini 2.5 Flash, um Text/LaTeX zu transkribieren
 
     und Skizzen direkt inline mit Platzhaltern im Lesefluss zu positionieren.
@@ -53,36 +56,61 @@ def process_page_with_gemini(
         '    {"index": 1, "box_2d": [y_min, x_min, y_max, x_max]}\n'
         "  ]\n"
         "}\n"
-        "Die Koordinaten in 'box_2d' müssen auf eine Skala von 0 bis 1000 normalisiert sein. "
+        "Die Koordinaten in 'box_2d' müssen auf einer Skala von 0 bis 1000 normalisiert sein. "
+        "Jede Box muss mindestens 25 Einheiten breit und hoch sein und die gesamte Skizze enthalten. "
+        "Füge nur tatsächliche Skizzen, Diagramme oder Graphen ein, keine leeren Dokumentbereiche. "
         "Falls keine Skizzen vorhanden sind, gib eine leere Liste 'sketches: []' zurück."
     )
 
-    try:
+    def request_structured_response(request_prompt: str) -> OCRPageResult:
         response = gemini_client.models.generate_content(
             model=GEMINI_MODEL,
             contents=[
                 types.Part.from_bytes(data=img_bytes, mime_type="image/png"),
-                prompt,
+                request_prompt,
             ],
             config=types.GenerateContentConfig(
-                temperature=0.1, response_mime_type="application/json"
+                temperature=0.1,
+                response_mime_type="application/json",
+                response_schema=OCRPageResult,
             ),
         )
+        if response.parsed is not None:
+            return OCRPageResult.model_validate(response.parsed)
+        if response.text:
+            return OCRPageResult.model_validate_json(response.text)
+        raise ValueError("Gemini returned no structured response")
 
-        data = json.loads(response.text)
-        markdown_content = data.get("markdown_content", "")
-        sketches = data.get("sketches", [])
-        return markdown_content, sketches
+    try:
+        try:
+            result = request_structured_response(prompt)
+        except (ValidationError, ValueError) as validation_error:
+            logger.warning(
+                "Invalid Gemini response for page %s; retrying once with stricter "
+                "sketch instructions: %s",
+                page_num,
+                validation_error,
+            )
+            retry_prompt = (
+                prompt
+                + "\nWICHTIGER RETRY-HINWEIS: Achte darauf, dass jede extrahierte Grafik "
+                "auch tatsächlich eine Grafik enthält und nicht nur einen leeren Bereich "
+                "des Dokuments. Verwirf Boxen, die zu klein, ungültig oder außerhalb "
+                "des Bildes liegen. Wenn keine echte Grafik sicher erkennbar ist, gib "
+                "für 'sketches' eine leere Liste zurück."
+            )
+            result = request_structured_response(retry_prompt)
+        return result.markdown_content, result.sketches
     except Exception:
         logger.exception(
             "Fehler bei der Gemini-Verarbeitung auf Seite %s", page_num
         )
-        return f"[Fehler bei der OCR-Verarbeitung auf Seite {page_num}]", []
+        raise
 
 
 def crop_and_save_sketches(
     page: fitz.Page,
-    sketches: list[dict],
+    sketches: list[Sketch],
     page_num: int,
     assets_dir: str,
     image_width: int,
@@ -98,10 +126,8 @@ def crop_and_save_sketches(
     padding_y = image_height * 0.02
 
     for item in sketches:
-        idx = item.get("index", 1)
-        box = item.get("box_2d")
-        if not box or len(box) != 4:
-            continue
+        idx = item.index
+        box = item.box_2d
 
         # Denormalisierung: Skala 0-1000 auf tatsächliche Bildpixel umrechnen
         y_min = (box[0] / 1000.0) * image_height
