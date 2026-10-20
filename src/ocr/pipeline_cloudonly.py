@@ -2,6 +2,8 @@ import base64
 import json
 import logging
 import os
+from pathlib import Path
+
 import fitz  # PyMuPDF
 from dotenv import load_dotenv
 from google import genai
@@ -197,14 +199,75 @@ def process_pdf_to_markdown(pdf_path: str, output_dir: str) -> str:
     return output_path
 
 
+def load_processed_files(state_path: Path) -> set[str]:
+    if not state_path.exists():
+        return set()
+
+    with state_path.open("r", encoding="utf-8") as state_file:
+        state = json.load(state_file)
+
+    if not isinstance(state, dict):
+        raise ValueError(f"State file must contain a JSON object: {state_path}")
+
+    processed_files = state.get("processed_files", [])
+    if not isinstance(processed_files, list) or not all(
+        isinstance(path, str) for path in processed_files
+    ):
+        raise ValueError(
+            f"'processed_files' must be a list of paths in {state_path}"
+        )
+
+    return set(processed_files)
+
+
+def save_processed_files(state_path: Path, processed_files: set[str]) -> None:
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state = {"processed_files": sorted(processed_files)}
+    temporary_path = state_path.with_suffix(f"{state_path.suffix}.tmp")
+
+    with temporary_path.open("w", encoding="utf-8") as state_file:
+        json.dump(state, state_file, ensure_ascii=False, indent=2)
+        state_file.write("\n")
+
+    temporary_path.replace(state_path)
+
+
+def process_untracked_pdfs(project_root: Path) -> None:
+    project_root = project_root.resolve()
+    input_dir = project_root / "data" / "input_pdf"
+    output_dir = project_root / "data" / "output_markdown"
+    state_path = project_root / "data" / "state.json"
+
+    if not input_dir.is_dir():
+        raise FileNotFoundError(f"PDF input directory does not exist: {input_dir}")
+
+    processed_files = load_processed_files(state_path)
+    pdf_paths = sorted(
+        (
+            path
+            for path in input_dir.iterdir()
+            if path.is_file() and path.suffix.lower() == ".pdf"
+        ),
+        key=lambda path: path.name.lower(),
+    )
+
+    if not pdf_paths:
+        logger.info("No PDF files found in %s", input_dir)
+        return
+
+    for pdf_path in pdf_paths:
+        relative_path = pdf_path.resolve().relative_to(project_root).as_posix()
+        if relative_path in processed_files:
+            logger.info("Skipping already processed PDF: %s", relative_path)
+            continue
+
+        logger.info("Processing new PDF: %s", relative_path)
+        process_pdf_to_markdown(str(pdf_path), str(output_dir))
+        processed_files.add(relative_path)
+        save_processed_files(state_path, processed_files)
+
+
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
-    test_pdf = "data/input_pdf/math_vorkurs.pdf"
-
-    if os.path.exists(test_pdf):
-        process_pdf_to_markdown(test_pdf, "data/output_markdown/")
-    else:
-        logger.warning(
-            "Bitte lege eine Test-PDF unter '%s' ab, um den Test zu starten.",
-            test_pdf,
-        )
+    repository_root = Path(__file__).resolve().parents[2] 
+    process_untracked_pdfs(repository_root)
