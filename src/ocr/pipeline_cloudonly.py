@@ -6,6 +6,7 @@ import fitz  # PyMuPDF
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
+from refiner import refine_document_layout_and_content
 
 # Lädt Umgebungsvariablen aus der .env-Datei (inkl. GEMINI_API_KEY)
 load_dotenv()
@@ -183,10 +184,11 @@ def process_pdf_to_markdown(pdf_path: str, output_dir: str) -> str:
         full_markdown.append(markdown_content)
 
     raw_markdown = "".join(full_markdown)
+    final_markdown = refine_document_layout_and_content(raw_markdown)
 
     output_path = os.path.join(output_dir, f"{base_name}_cleaned.md")
     with open(output_path, "w", encoding="utf-8") as f:
-        f.write(raw_markdown)
+        f.write(final_markdown)
 
     logger.info(
         "Fertig! Markdown mit perfekt inlinierten Skizzen gespeichert unter: %s",
