@@ -17,8 +17,8 @@ def refine_document_layout_and_content(raw_markdown: str) -> str:
         "Aufgaben:\n"
         "1. Entferne künstliche Seitenumbrüche (z. B. '--- Seite X ---') und verbinde zerrissene Sätze/Absätze flüssig.\n"
         "2. Vereinheitliche die Überschriften-Hierarchie (#, ##, ###).\n"
-        "3. Stelle sicher, dass Tabellen und Bildverweise (![Skizze...](assets/...)) sauber im Fließtext verankert sind.\n"
-        "4. Gib AUSSCHLIESSLICH das überarbeitete Markdown zurück."
+        '3. Stelle sicher, dass Tabellen und Bildverweise bitte mit <img src="assets/sketch_p1_1.png" alt="Skizze" width="500" style="display: block; margin: 0 auto; max-width: 60%; height: auto;" /> sauber im Fließtext verankert sind. Zentriere die Bilder.\n'
+        "4. Gib AUSSCHLIESSLICH das überarbeitete Markdown zurück. Füge allerdings keine zusätzlichen Markdown-Tags hinzu, du wirst ausschließlich Markdwon-Files bekommen, die zusätzlichen Tags würden dann nicht korrekt darstellen."
     )
 
     response_layout = gemini_client.models.generate_content(
